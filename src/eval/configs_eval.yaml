@@ -1,0 +1,32 @@
+data:
+    batch_size: 400
+    num_workers: 0
+    pin_mem: false
+    spec_path: spec_demo.csv
+    trait_name: LMA
+    trait_name_list:
+        - LMA
+        - Water
+        - CHL
+        - CAR
+        - Nitrogen
+        - Carbon
+    proportion: 100
+    fold_idx: 0
+    n_splits: 5
+
+meta:
+    seed: 42
+    model_size: large
+    patch_size: 30
+
+ckpt:
+    up_checkpoint: large_pure.pth.tar
+    down_checkpoint: large_LMA_fid0_ppt100-ep500.pth.tar
+    down_checkpoint_dict:
+        LMA: large_LMA_fid0_ppt100-ep500.pth.tar
+        Water: large_Water_fid0_ppt100-ep500.pth.tar
+        CHL: large_CHL_fid0_ppt100-ep500.pth.tar
+        CAR: large_CAR_fid0_ppt100-ep500.pth.tar
+        Nitrogen: large_Nitrogen_fid0_ppt100-ep500.pth.tar
+        Carbon: large_Carbon_fid0_ppt100-ep500.pth.tar

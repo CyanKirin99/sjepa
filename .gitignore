@@ -1,14 +1,10 @@
 *.csv
 *.xlsx
 *.tar
-*.joblib
-*.png
-*.bkp
 __pycache__/
 *.pyc
 *.pyo
 .idea/
-*/figs/
 data/
 other_utils/
 log/

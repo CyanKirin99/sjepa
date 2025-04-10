@@ -1,0 +1,50 @@
+data:
+    batch_size: 400
+    num_workers: 0
+    pin_mem: true
+    # -- for upstream only
+    spec_path: spec_demo.csv
+    # -- for downstream only
+    trait_name: CHL
+    proportion: 100
+    fold_idx: 0
+    n_splits: 5
+
+logging:
+    log_freq: 1
+    checkpoint_freq: 500
+
+mask:
+    num_tgt_blk: 4
+    tgt_p_len: 6
+    cxt_p_len: 24
+
+meta:
+    seed: 42
+    use_bfloat16: true
+    model_size: large
+    patch_size: 30
+    up_checkpoint: large_pure.pth.tar
+    # -- for upstream only
+    load_up_checkpoint: false
+    pred_emb_dim: 96
+    pred_depth: 2
+    load_opt_up: false
+    # -- for downstream only
+    cache_feature: true
+
+optimization:
+    final_lr: 1.0e-06
+    final_weight_decay: 0.4
+    ipe_scale: 1.0
+    lr: 0.0001
+    start_lr: 0.00002
+    warmup: 10
+    weight_decay: 0.04
+    # -- for upstream only
+    epochs_up: 1000
+    ema:
+        - 0.996
+        - 1.0
+    # -- for downstream only
+    epochs_down: 500
