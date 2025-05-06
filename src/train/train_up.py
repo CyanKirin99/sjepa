@@ -71,7 +71,7 @@ def main(args):
     # --MASK
     num_tgt_blk = args['mask']['num_tgt_blk']
     tgt_p_len = args['mask']['tgt_p_len']
-    cxt_p_len = args['mask']['cxt_p_len']
+    ctx_p_len = args['mask']['ctx_p_len']
 
     # -- OPTIMIZATION
     ema = args['optimization']['ema']
@@ -181,8 +181,8 @@ def main(args):
             x, mask = embedder(x)
 
             # tgt_indices: tensor (batch_size*num_tgt_blk, tgt_p_len)
-            # cxt_indices: tensor (batch_size, cxt_p_len)
-            tgt_indices, cxt_indices = sample(x, num_tgt_blk, tgt_p_len, cxt_p_len, mask)
+            # ctx_indices: tensor (batch_size, ctx_p_len)
+            tgt_indices, ctx_indices = sample(x, num_tgt_blk, tgt_p_len, ctx_p_len, mask)
 
             def train_step():
                 _new_lr = scheduler.step()
@@ -203,11 +203,11 @@ def main(args):
                         tgt_rep = torch.gather(all_rep, 1, tgt_indices_.to(all_rep.device))
                     return tgt_rep, tgt_indices_, sampling_mask
 
-                def forward_context(x, cxt_indices):
-                    cxt_indices_ = cxt_indices.unsqueeze(-1).expand(-1, -1, x.size(-1))
-                    cxt_rep = torch.gather(x, 1, cxt_indices_.to(x.device))
-                    cxt_rep = encoder(cxt_rep, indices=cxt_indices)
-                    return cxt_rep, cxt_indices_
+                def forward_context(x, ctx_indices):
+                    ctx_indices_ = ctx_indices.unsqueeze(-1).expand(-1, -1, x.size(-1))
+                    ctx_rep = torch.gather(x, 1, ctx_indices_.to(x.device))
+                    ctx_rep = encoder(ctx_rep, indices=ctx_indices)
+                    return ctx_rep, ctx_indices_
 
                 def loss_fn(z, h):
                     loss = F.smooth_l1_loss(z, h)
@@ -216,9 +216,9 @@ def main(args):
                 # Step 1. Forward
                 with torch.amp.autocast('cuda', dtype=torch.float16, enabled=use_bfloat16):
                     tgt_rep, tgt_indices_, sampling_mask = forward_target(x, tgt_indices)
-                    cxt_rep, cxt_indices_ = forward_context(x, cxt_indices)
+                    ctx_rep, ctx_indices_ = forward_context(x, ctx_indices)
                     tgt_shp = tgt_rep.shape
-                    pred_rep = predictor(cxt_rep, tgt_shp, cxt_indices, tgt_indices, num_tgt_blk, sampling_mask)
+                    pred_rep = predictor(ctx_rep, tgt_shp, ctx_indices, tgt_indices, num_tgt_blk, sampling_mask)
                     loss = loss_fn(pred_rep, tgt_rep)
 
                 #  Step 2. Backward & step
