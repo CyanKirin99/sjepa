@@ -17,7 +17,7 @@ logging:
 mask:
     num_tgt_blk: 4
     tgt_p_len: 6
-    cxt_p_len: 24
+    ctx_p_len: 24
 
 meta:
     seed: 42

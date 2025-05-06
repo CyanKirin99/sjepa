@@ -367,10 +367,10 @@ class Predictor(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, ctx_rep, tgt_shp, cxt_indices, tgt_indices, num_tgt_blk, sampling_mask):
+    def forward(self, ctx_rep, tgt_shp, ctx_indices, tgt_indices, num_tgt_blk, sampling_mask):
         # -- map from encoder-dim to predictor-dim and add positional embedding
         ctx_rep_down = self.predictor_embed(ctx_rep)
-        ctx_rep_down += self.pe(ctx_rep_down, cxt_indices)
+        ctx_rep_down += self.pe(ctx_rep_down, ctx_indices)
         ctx_rep_down = ctx_rep_down.repeat_interleave(num_tgt_blk, dim=0)
 
         ctx_rep_down = ctx_rep_down[sampling_mask]
