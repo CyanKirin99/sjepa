@@ -3,7 +3,7 @@ data:
     num_workers: 0
     pin_mem: false
     spec_path: spec_demo.csv
-    trait_name: LMA
+    trait_name: CHL
     trait_name_list:
         - LMA
         - Water
@@ -22,11 +22,11 @@ meta:
 
 ckpt:
     up_checkpoint: large_pure.pth.tar
-    down_checkpoint: large_LMA_fid0_ppt100-ep500.pth.tar
+    down_checkpoint: large_CHL.pth.tar
     down_checkpoint_dict:
-        LMA: large_LMA_fid0_ppt100-ep500.pth.tar
-        Water: large_Water_fid0_ppt100-ep500.pth.tar
-        CHL: large_CHL_fid0_ppt100-ep500.pth.tar
-        CAR: large_CAR_fid0_ppt100-ep500.pth.tar
-        Nitrogen: large_Nitrogen_fid0_ppt100-ep500.pth.tar
-        Carbon: large_Carbon_fid0_ppt100-ep500.pth.tar
+        LMA: large_LMA.pth.tar
+        Water: large_Water.pth.tar
+        CHL: large_CHL.pth.tar
+        CAR: large_CAR.pth.tar
+        Nitrogen: large_Nitrogen.pth.tar
+        Carbon: large_Carbon.pth.tar

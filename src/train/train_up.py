@@ -7,6 +7,7 @@
 
 import sys
 import os
+import argparse
 from pathlib import Path
 import copy
 import logging
@@ -30,9 +31,137 @@ from src.utils import (gpu_timer, grad_logger,
                        sample, generate_sampling_mask)
 
 
+def setup_args():
+    parser = argparse.ArgumentParser(
+        'S-JEPA Pre-training Script (train_up.py)',
+        description='Script for pre-training S-JEPA model using upstream data.',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter  # Shows defaults in --help
+    )
+
+    # --- Configuration File ---
+    parser.add_argument('--config_file', default=str(current_dir / 'configs_train.yaml'), type=str,
+                        help='Path to the YAML configuration file.')
+
+    # --- Meta Parameters ---
+    g_meta = parser.add_argument_group('Meta Parameters')
+    g_meta.add_argument('--seed', type=int, default=42, help='Global random seed.')
+    g_meta.add_argument('--use_bfloat16', action=argparse.BooleanOptionalAction, default=False,
+                        help='Enable/disable bfloat16 precision.')
+    g_meta.add_argument('--model_size', type=str, default='large', choices=['tiny', 'small', 'base', 'large'],
+                        help='Model size.')
+    g_meta.add_argument('--patch_size', type=int, default=30, help='Patch window size for the spectra.')
+    g_meta.add_argument('--pred_depth', type=int, default=2, help='Predictor depth.')
+    g_meta.add_argument('--pred_emb_dim', type=int, default=96, help='Predictor embedding dimension.')
+    g_meta.add_argument('--up_checkpoint_path', type=str, default=None,
+                        help='Path to an existing model checkpoint to load. If provided, enables loading and overrides YAML path.')
+    g_meta.add_argument('--load_optimizer_state', action=argparse.BooleanOptionalAction, default=False,
+                        help='Enable/disable loading optimizer state from the checkpoint (if loading a model).')
+
+    # --- Data Parameters ---
+    g_data = parser.add_argument_group('Data Parameters')
+    g_data.add_argument('--batch_size', type=int, default=400, help='Batch size per iteration.')
+    g_data.add_argument('--pin_memory', action=argparse.BooleanOptionalAction, default=False,
+                        help='Enable/disable pinning CPU memory in DataLoader.')
+    g_data.add_argument('--num_workers', type=int, default=0, help='Number of data loading workers.')
+    g_data.add_argument('--spec_path', type=str, default=None,
+                        help='Path to spectral data CSV file.')
+
+    # --- Masking Parameters ---
+    g_mask = parser.add_argument_group('Masking Parameters')
+    g_mask.add_argument('--num_tgt_blk', type=int, default=4, help='Number of target blocks.')
+    g_mask.add_argument('--tgt_p_len', type=int, default=6, help='Target patch sequence length.')
+    g_mask.add_argument('--ctx_p_len', type=int, default=24, help='Context patch sequence length.')
+
+    # --- Optimization Parameters ---
+    g_opt = parser.add_argument_group('Optimization Parameters')
+    g_opt.add_argument('--epochs', type=int, default=1000, help='Total number of training epochs (overrides epochs_up).')
+    g_opt.add_argument('--ema', type=float, nargs=2, metavar=('START_EMA', 'END_EMA'), default=(0.996, 1.0), help='EMA decay values (start and end).')
+    g_opt.add_argument('--ipe_scale', type=float, default=1.0, help='IPE scale factor for scheduler.')
+    g_opt.add_argument('--wd', type=float, default=0.04, help='Weight decay (overrides optimization.weight_decay).')
+    g_opt.add_argument('--final_wd', type=float, default=0.4, help='Final weight decay (overrides optimization.final_weight_decay).')
+    g_opt.add_argument('--warmup_epochs', type=int, default=10, help='Number of warmup epochs (overrides optimization.warmup).')
+    g_opt.add_argument('--start_lr', type=float, default=0.00002, help='Initial learning rate for warmup.')
+    g_opt.add_argument('--lr', type=float, default=0.0001, help='Base learning rate.')
+    g_opt.add_argument('--final_lr', type=float, default=1.0e-06, help='Final learning rate.')
+
+    # --- Logging Parameters ---
+    g_log = parser.add_argument_group('Logging Parameters')
+    g_log.add_argument('--log_freq', type=int, default=1, help='Frequency of logging training stats (iterations).')
+    g_log.add_argument('--checkpoint_freq', type=int, default=500, help='Frequency of saving checkpoints (epochs).')
+
+    cli_params = parser.parse_args()
+
+    # 1. Load YAML config as the base
+    try:
+        with open(cli_params.config_file, 'r') as y_file:
+            args_from_yaml = yaml.load(y_file, Loader=yaml.FullLoader)
+        print(f"INFO: Loaded base configuration from: {cli_params.config_file}")
+    except FileNotFoundError:
+        print(
+            f"WARNING: Configuration file {cli_params.config_file} not found. Using command-line defaults or script defaults.")
+        args_from_yaml = {}  # Start with an empty dict if YAML is not found
+
+    # Create the final args dictionary, starting with YAML (or empty)
+    final_args = copy.deepcopy(
+        args_from_yaml)  # Use deepcopy to avoid modifying the loaded YAML dict directly if it's reused
+
+    # Ensure basic structure exists if YAML was empty or incomplete
+    final_args.setdefault('meta', {})
+    final_args.setdefault('data', {})
+    final_args.setdefault('mask', {})
+    final_args.setdefault('optimization', {})
+    final_args.setdefault('logging', {})
+
+    # 2. Override YAML with CLI parameters if they were provided by the user
+    # Meta
+    if cli_params.seed is not None: final_args['meta']['seed'] = cli_params.seed
+    if cli_params.use_bfloat16 is not None: final_args['meta']['use_bfloat16'] = cli_params.use_bfloat16
+    if cli_params.model_size is not None: final_args['meta']['model_size'] = cli_params.model_size
+    if cli_params.patch_size is not None: final_args['meta']['patch_size'] = cli_params.patch_size
+    if cli_params.pred_depth is not None: final_args['meta']['pred_depth'] = cli_params.pred_depth
+    if cli_params.pred_emb_dim is not None: final_args['meta']['pred_emb_dim'] = cli_params.pred_emb_dim
+
+    if cli_params.up_checkpoint_path is not None:  # CLI path for checkpoint implies loading
+        final_args['meta']['load_up_checkpoint'] = True
+        final_args['meta']['up_checkpoint'] = cli_params.up_checkpoint_path
+    if cli_params.load_optimizer_state is not None:  # CLI override for loading optimizer
+        final_args['meta']['load_opt_up'] = cli_params.load_optimizer_state
+
+    # Data
+    if cli_params.batch_size is not None: final_args['data']['batch_size'] = cli_params.batch_size
+    if cli_params.pin_memory is not None: final_args['data']['pin_mem'] = cli_params.pin_memory
+    if cli_params.num_workers is not None: final_args['data']['num_workers'] = cli_params.num_workers
+    if cli_params.spec_path is not None: final_args['data']['spec_path'] = cli_params.spec_path
+
+    # Mask
+    if cli_params.num_tgt_blk is not None: final_args['mask']['num_tgt_blk'] = cli_params.num_tgt_blk
+    if cli_params.tgt_p_len is not None: final_args['mask']['tgt_p_len'] = cli_params.tgt_p_len
+    if cli_params.ctx_p_len is not None: final_args['mask']['ctx_p_len'] = cli_params.ctx_p_len
+
+    # Optimization
+    if cli_params.epochs is not None: final_args['optimization']['epochs_up'] = cli_params.epochs
+    if cli_params.ema is not None: final_args['optimization']['ema'] = cli_params.ema
+    if cli_params.ipe_scale is not None: final_args['optimization']['ipe_scale'] = cli_params.ipe_scale
+    if cli_params.wd is not None: final_args['optimization']['weight_decay'] = cli_params.wd
+    if cli_params.final_wd is not None: final_args['optimization']['final_weight_decay'] = cli_params.final_wd
+    if cli_params.warmup_epochs is not None: final_args['optimization']['warmup'] = cli_params.warmup_epochs
+    if cli_params.start_lr is not None: final_args['optimization']['start_lr'] = cli_params.start_lr
+    if cli_params.lr is not None: final_args['optimization']['lr'] = cli_params.lr
+    if cli_params.final_lr is not None: final_args['optimization']['final_lr'] = cli_params.final_lr
+
+    if cli_params.log_freq is not None: final_args['logging']['log_freq'] = cli_params.log_freq
+    if cli_params.checkpoint_freq is not None: final_args['logging']['checkpoint_freq'] = cli_params.checkpoint_freq
+
+    print("--- Effective Configuration (after CLI overrides) ---")
+    pprint(final_args)  # For debugging, uses the imported pprint
+    print("-----------------------------------------------------")
+
+    return final_args
+
+
 def main(args):
     # ----------------------------------------------------------------------- #
-    #  PASSED IN PARAMS FROM CONFIG FILE
+    #  PASSED IN PARAMS
     # ----------------------------------------------------------------------- #
 
     # -- META
@@ -90,6 +219,11 @@ def main(args):
     checkpoint_freq = args['logging']['checkpoint_freq']
 
     folder = project_root / 'log' / 'log_up/'
+    if not os.path.exists(project_root / 'log'):
+        os.mkdir(project_root / 'log')
+    if not os.path.exists(folder):
+        os.mkdir(folder)
+
     dump = os.path.join(folder, f'params_up_{tag}.yaml')
     with open(dump, 'w') as f:
         yaml.dump(args, f)
@@ -276,9 +410,5 @@ def main(args):
 
 
 if __name__ == '__main__':
-    config_file = current_dir / 'configs_train.yaml'
-    with open(config_file, 'r') as y_file:
-        args = yaml.load(y_file, Loader=yaml.FullLoader)
-    pprint(args)
-
+    args = setup_args()
     main(args)
