@@ -7,6 +7,8 @@
 
 import sys
 import os
+import argparse
+import copy
 from pathlib import Path
 import logging
 import yaml
@@ -24,6 +26,114 @@ if str(project_root) not in sys.path:
 from src.helper import init_model, init_opt, load_checkpoint
 from src.utils import gpu_timer, CSVLogger, AverageMeter
 from src.datas import create_dataset_down
+
+
+def setup_args():
+    parser = argparse.ArgumentParser(
+        'S-JEPA Downstream Training (train_down.py)',
+        description='Script for fine-tuning or linear probing S-JEPA features on downstream tasks.',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter # Shows defaults in --help
+    )
+
+    # --- Configuration File ---
+    parser.add_argument('--config_file', default=str(current_dir / 'configs_train.yaml'), type=str,
+                        help='Path to the YAML configuration file.')
+
+    # --- Meta Parameters ---
+    g_meta = parser.add_argument_group('Meta Parameters')
+    g_meta.add_argument('--seed', type=int, default=42, help='Global random seed.')
+    # For Python 3.9+ for BooleanOptionalAction.
+    g_meta.add_argument('--use_bfloat16', action=argparse.BooleanOptionalAction, default=False, help='Enable/disable bfloat16 precision.')
+    g_meta.add_argument('--model_size', type=str, default='large', choices=['tiny', 'small', 'base', 'large'], help='Base model size (must match upstream).')
+    g_meta.add_argument('--patch_size', type=int, default=30, help='Patch size (must match upstream).')
+    g_meta.add_argument('--up_checkpoint_path', type=str, default=None,
+                        help='Path to the pretrained upstream model checkpoint (.pth.tar file). Overrides YAML.')
+    g_meta.add_argument('--cache_feature', action=argparse.BooleanOptionalAction, default=None,
+                        help='Enable/disable caching features from the upstream model.')
+
+    # --- Data Parameters ---
+    g_data = parser.add_argument_group('Data Parameters')
+    g_data.add_argument('--batch_size', type=int, default=400, help='Batch size per GPU for downstream task.')
+    g_data.add_argument('--num_workers', type=int, default=0, help='Number of data loading workers.')
+    g_data.add_argument('--pin_memory', action=argparse.BooleanOptionalAction, default=False, help='Enable/disable pinning CPU memory.')
+    g_data.add_argument('--trait_name', type=str, default='CHL', help='Name of the trait to train on (e.g., CHL, LMA).')
+    g_data.add_argument('--proportion', type=int, default=100, help='Percentage of training data to use (e.g., 100 for 100%%).') # Can also be float if needed
+    g_data.add_argument('--fold_idx', type=int, default=0, help='Fold index for cross-validation.')
+    g_data.add_argument('--n_splits', type=int, default=5, help='Total number of splits for cross-validation.')
+
+    # --- Optimization Parameters (for downstream task) ---
+    g_opt = parser.add_argument_group('Optimization Parameters')
+    g_opt.add_argument('--epochs', type=int, default=500, help='Total training epochs for downstream task (overrides epochs_down).')
+    g_opt.add_argument('--lr', type=float, default=0.0001, help='Base learning rate for downstream optimizer.')
+    g_opt.add_argument('--wd', type=float, default=0.04, help='Weight decay for downstream optimizer.')
+    g_opt.add_argument('--start_lr', type=float, default=0.00002, help='Initial learning rate for warmup.')
+    g_opt.add_argument('--final_lr', type=float, default=1.0e-06, help='Final learning rate.')
+    g_opt.add_argument('--final_wd', type=float, default=0.4, help='Final weight decay.')
+    g_opt.add_argument('--warmup_epochs', type=int, default=10, help='Number of warmup epochs.')
+    g_opt.add_argument('--ipe_scale', type=float, default=1.0, help='IPE scale factor for scheduler.')
+
+    # --- Logging Parameters ---
+    g_log = parser.add_argument_group('Logging Parameters')
+    g_log.add_argument('--log_freq', type=int, default=1, help='Frequency of logging training stats (iterations).')
+    g_log.add_argument('--checkpoint_freq', type=int, default=500, help='Frequency of saving checkpoints (epochs).')
+
+    cli_params = parser.parse_args()
+
+    # 1. Load YAML config as the base
+    try:
+        with open(cli_params.config_file, 'r') as y_file:
+            args_from_yaml = yaml.load(y_file, Loader=yaml.FullLoader)
+        print(f"INFO: Loaded base configuration from: {cli_params.config_file}")
+    except FileNotFoundError:
+        print(f"WARNING: Configuration file {cli_params.config_file} not found. Using command-line defaults or script defaults.")
+        args_from_yaml = {}
+
+    final_args = copy.deepcopy(args_from_yaml)
+
+    # Ensure basic structure exists
+    final_args.setdefault('meta', {})
+    final_args.setdefault('data', {})
+    final_args.setdefault('optimization', {})
+    final_args.setdefault('logging', {})
+
+    # 2. Override YAML with CLI parameters if they were provided
+    # Meta
+    if cli_params.seed is not None: final_args['meta']['seed'] = cli_params.seed
+    if cli_params.use_bfloat16 is not None: final_args['meta']['use_bfloat16'] = cli_params.use_bfloat16
+    if cli_params.model_size is not None: final_args['meta']['model_size'] = cli_params.model_size
+    if cli_params.patch_size is not None: final_args['meta']['patch_size'] = cli_params.patch_size
+    if cli_params.up_checkpoint_path is not None: # This CLI arg directly sets the path for 'up_checkpoint'
+        final_args['meta']['up_checkpoint'] = cli_params.up_checkpoint_path
+    if cli_params.cache_feature is not None: final_args['meta']['cache_feature'] = cli_params.cache_feature
+
+    # Data
+    if cli_params.batch_size is not None: final_args['data']['batch_size'] = cli_params.batch_size
+    if cli_params.num_workers is not None: final_args['data']['num_workers'] = cli_params.num_workers
+    if cli_params.pin_memory is not None: final_args['data']['pin_mem'] = cli_params.pin_memory
+    if cli_params.trait_name is not None: final_args['data']['trait_name'] = cli_params.trait_name
+    if cli_params.proportion is not None: final_args['data']['proportion'] = cli_params.proportion
+    if cli_params.fold_idx is not None: final_args['data']['fold_idx'] = cli_params.fold_idx
+    if cli_params.n_splits is not None: final_args['data']['n_splits'] = cli_params.n_splits
+
+    # Optimization
+    if cli_params.epochs is not None: final_args['optimization']['epochs_down'] = cli_params.epochs
+    if cli_params.lr is not None: final_args['optimization']['lr'] = cli_params.lr
+    if cli_params.wd is not None: final_args['optimization']['weight_decay'] = cli_params.wd
+    if cli_params.start_lr is not None: final_args['optimization']['start_lr'] = cli_params.start_lr
+    if cli_params.final_lr is not None: final_args['optimization']['final_lr'] = cli_params.final_lr
+    if cli_params.final_wd is not None: final_args['optimization']['final_weight_decay'] = cli_params.final_wd
+    if cli_params.warmup_epochs is not None: final_args['optimization']['warmup'] = cli_params.warmup_epochs
+    if cli_params.ipe_scale is not None: final_args['optimization']['ipe_scale'] = cli_params.ipe_scale
+
+    # Logging
+    if cli_params.log_freq is not None: final_args['logging']['log_freq'] = cli_params.log_freq
+    if cli_params.checkpoint_freq is not None: final_args['logging']['checkpoint_freq'] = cli_params.checkpoint_freq
+
+    print("--- Effective Configuration (train_down.py) ---")
+    pprint(final_args)
+    print("-----------------------------------------------")
+
+    return final_args
 
 
 def main(args):
@@ -81,6 +191,10 @@ def main(args):
 
     tag = f'{model_size}_{trait_name}_fid{fold_idx}_ppt{proportion}'
     folder = project_root / 'log' / 'log_down'
+    if not os.path.exists(project_root / 'log'):
+        os.mkdir(project_root / 'log')
+    if not os.path.exists(folder):
+        os.mkdir(folder)
     up_path = project_root / 'log' / 'log_up' / up_checkpoint
 
     dump = os.path.join(folder, f'params_{tag}.yaml')
@@ -227,9 +341,5 @@ def main(args):
 
 
 if __name__ == '__main__':
-    config_file = current_dir / 'configs_train.yaml'
-    with open(config_file, 'r') as y_file:
-        args = yaml.load(y_file, Loader=yaml.FullLoader)
-
+    args = setup_args()
     main(args)
-

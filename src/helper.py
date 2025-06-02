@@ -41,7 +41,7 @@ def init_model(
         pred_depth=pred_depth,
         pred_emb_dim=pred_emb_dim
     )
-    logger.info(up_model)
+    # logger.info(up_model)
     for m in up_model.modules():
         init_weights(m)
     up_model.to(device)
