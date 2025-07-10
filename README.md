@@ -1,7 +1,5 @@
 # S-JEPA [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
 
-This is the official implementation for the paper: "Unlocking the Potential of Hyperspectral Data: Self-Supervised Learning for Multiple Leaf Trait Estimation."
-
 ## Introduction
 S-JEPA (Spectral Joint Embedding Predictive Architecture) is a novel self-supervised learning (SSL) approach designed to learn generalizable feature representations from unlabeled spectral data by pretraining on large-scale hyperspectral datasets. It enables accurate estimation of multiple leaf traits, performing exceptionally well, especially in scenarios with scarce labeled data. Our work demonstrates the potential of SSL in extracting robust spectral features for enhanced ecosystem monitoring.
 
